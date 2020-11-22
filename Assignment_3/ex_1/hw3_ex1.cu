@@ -178,7 +178,7 @@ __global__ void gpu_grayscale(int width, int height, float *image, float *image_
 /**
  * Applies a 3x3 convolution matrix to a pixel using the CPU.
  */
-float cpu_applyFilter(float *image, int stride, float *matrix, int filter_dim) {
+__host__ __device__ float applyFilter(float *image, int stride, float *matrix, int filter_dim) {
     float pixel = 0.0f;
 
     for (int h = 0; h < filter_dim; h++) {
@@ -194,20 +194,6 @@ float cpu_applyFilter(float *image, int stride, float *matrix, int filter_dim) {
 }
 
 /**
- * Applies a 3x3 convolution matrix to a pixel using the GPU.
- */
-__device__ float gpu_applyFilter(float *image, int stride, float *matrix, int filter_dim) {
-    ////////////////
-    // TO-DO #5.2 ////////////////////////////////////////////////
-    // Implement the GPU version of cpu_applyFilter()           //
-    //                                                          //
-    // Does it make sense to have a separate gpu_applyFilter()? //
-    //////////////////////////////////////////////////////////////
-
-    return 0.0f;
-}
-
-/**
  * Applies a Gaussian 3x3 filter to a given image using the CPU.
  */
 void cpu_gaussian(int width, int height, float *image, float *image_out) {
@@ -220,7 +206,7 @@ void cpu_gaussian(int width, int height, float *image, float *image_out) {
         int offset = (h + 1) * width;
 
         for (int w = 0; w < (width - 2); w++) {
-            image_out[offset + (w + 1)] = cpu_applyFilter(&image[offset_t + w],
+            image_out[offset + (w + 1)] = applyFilter(&image[offset_t + w],
                                                           width, gaussian, 3);
         }
     }
@@ -241,7 +227,7 @@ __global__ void gpu_gaussian(int width, int height, float *image, float *image_o
         int offset_t = index_y * width + index_x;
         int offset = (index_y + 1) * width + (index_x + 1);
 
-        image_out[offset] = gpu_applyFilter(&image[offset_t],
+        image_out[offset] = applyFilter(&image[offset_t],
                                             width, gaussian, 3);
     }
 }
@@ -262,8 +248,8 @@ void cpu_sobel(int width, int height, float *image, float *image_out) {
         int offset = (h + 1) * width;
 
         for (int w = 0; w < (width - 2); w++) {
-            float gx = cpu_applyFilter(&image[offset_t + w], width, sobel_x, 3);
-            float gy = cpu_applyFilter(&image[offset_t + w], width, sobel_y, 3);
+            float gx = applyFilter(&image[offset_t + w], width, sobel_x, 3);
+            float gy = applyFilter(&image[offset_t + w], width, sobel_y, 3);
 
             // Note: The output can be negative or exceed the max. color value
             // of 255. We compensate this afterwards while storing the file.
@@ -351,11 +337,9 @@ int main(int argc, char **argv) {
 
         // Launch the GPU version
         gettimeofday(&t[0], NULL);
-        // gpu_gaussian<<<grid, block>>>(bitmap.width, bitmap.height,
-        //                               d_image_out[0], d_image_out[1]);
+        gpu_gaussian<<<grid, block>>>(bitmap.width, bitmap.height, d_image_out[0], d_image_out[1]);
 
-        // cudaMemcpy(image_out[1], d_image_out[1],
-        //            image_size * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(image_out[1], d_image_out[1], image_size * sizeof(float), cudaMemcpyDeviceToHost);
         gettimeofday(&t[1], NULL);
 
         elapsed[1] = get_elapsed(t[0], t[1]);
