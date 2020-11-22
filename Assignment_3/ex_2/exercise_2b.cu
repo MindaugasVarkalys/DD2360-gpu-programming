@@ -35,16 +35,14 @@ __global__ void simulate(Particle* particles) {
 
 int main()
 {
-    Particle *particles = new Particle[NUM_PARTICLES];
-    Particle *d_particles = new Particle[NUM_PARTICLES];
+    Particle *particles;
 
-    //cudaMalloc(&d_particles, sizeof(Particle) * NUM_PARTICLES);
-    cudaMallocHost(&d_particles, sizeof(Particle) * NUM_PARTICLES);
-
+    cudaError_t code = cudaMallocManaged(&particles, sizeof(Particle) * NUM_PARTICLES);
     for (int i = 0; i < NUM_ITERATIONS; i++) {
-        cudaMemcpy(d_particles, particles, sizeof(Particle) * NUM_PARTICLES, cudaMemcpyHostToDevice);
-        simulate<<<N, TPB>>>(d_particles);
-        cudaMemcpy(particles, d_particles, sizeof(Particle) * NUM_PARTICLES, cudaMemcpyDeviceToHost);
+        simulate<<<N, TPB>>>(particles);
+        cudaDeviceSynchronize();
     }
-
+    for (int i = 0; i < 10; i++) {
+        printf("%f %f %f\n", particles[0].position_x, particles[0].position_y, particles[0].position_z);
+    }
 }
