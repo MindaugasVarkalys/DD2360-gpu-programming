@@ -5,6 +5,7 @@
 
 #define BLOCK_SIZE  16
 #define HEADER_SIZE 138
+#define BLOCK_SIZE_SH 18
 
 typedef unsigned char BYTE;
 
@@ -222,13 +223,36 @@ __global__ void gpu_gaussian(int width, int height, float *image, float *image_o
 
     int index_x = blockIdx.x * blockDim.x + threadIdx.x;
     int index_y = blockIdx.y * blockDim.y + threadIdx.y;
+    int offset_t = index_y * width + index_x;
+    int offset_sh = threadIdx.y * BLOCK_SIZE_SH + threadIdx.x;
+
+    __shared__ float sh_block[BLOCK_SIZE_SH * BLOCK_SIZE_SH];
+
+    sh_block[offset_sh] = image[offset_t];
+
+    // Last element in block's X axis
+    if (threadIdx.x == blockDim.x - 1) {
+        sh_block[offset_sh + 1] = image[offset_t + 1];
+        sh_block[offset_sh + 2] = image[offset_t + 2];
+    }
+    // Last element in block's Y axis
+    if (threadIdx.y == blockDim.y - 1) {
+        sh_block[offset_sh + BLOCK_SIZE_SH] = image[offset_t + width];
+        sh_block[offset_sh + 2 * BLOCK_SIZE_SH] = image[offset_t + 2 * width];
+    }
+    // Last element in the entire block (both X and Y axis)
+    if (threadIdx.x == blockDim.x - 1 && threadIdx.y == blockDim.y - 1) {
+        sh_block[offset_sh + BLOCK_SIZE_SH + 1] = image[offset_t + width + 1];
+        sh_block[offset_sh + BLOCK_SIZE_SH + 2] = image[offset_t + width + 2];
+        sh_block[offset_sh + 2 * BLOCK_SIZE_SH + 1] = image[offset_t + 2 * width + 1];
+        sh_block[offset_sh + 2 * BLOCK_SIZE_SH + 2] = image[offset_t + 2 * width + 2];
+    }
+
+    __syncthreads();
 
     if (index_x < (width - 2) && index_y < (height - 2)) {
-        int offset_t = index_y * width + index_x;
         int offset = (index_y + 1) * width + (index_x + 1);
-
-        image_out[offset] = applyFilter(&image[offset_t],
-                                            width, gaussian, 3);
+        image_out[offset] = applyFilter(&sh_block[offset_sh], BLOCK_SIZE_SH, gaussian, 3);
     }
 }
 
@@ -267,6 +291,8 @@ __global__ void gpu_sobel(int width, int height, float *image, float *image_out)
     // Implement the GPU version of the Sobel filter //
     ///////////////////////////////////////////////////
 
+//    __shared__ float sh_block[BLOCK_SIZE_SH * BLOCK_SIZE_SH];
+
     float sobel_x[9] = {1.0f, 0.0f, -1.0f,
                         2.0f, 0.0f, -2.0f,
                         1.0f, 0.0f, -1.0f};
@@ -277,12 +303,38 @@ __global__ void gpu_sobel(int width, int height, float *image, float *image_out)
     int index_x = blockIdx.x * blockDim.x + threadIdx.x;
     int index_y = blockIdx.y * blockDim.y + threadIdx.y;
 
+    int offset_t = index_y * width + index_x;
+    int offset_sh = threadIdx.y * BLOCK_SIZE_SH + threadIdx.x;
+
+    __shared__ float sh_block[BLOCK_SIZE_SH * BLOCK_SIZE_SH];
+
+    sh_block[offset_sh] = image[offset_t];
+
+    // Last element in block's X axis
+    if (threadIdx.x == blockDim.x - 1) {
+        sh_block[offset_sh + 1] = image[offset_t + 1];
+        sh_block[offset_sh + 2] = image[offset_t + 2];
+    }
+    // Last element in block's Y axis
+    if (threadIdx.y == blockDim.y - 1) {
+        sh_block[offset_sh + BLOCK_SIZE_SH] = image[offset_t + width];
+        sh_block[offset_sh + 2 * BLOCK_SIZE_SH] = image[offset_t + 2 * width];
+    }
+    // Last element in the entire block (both X and Y axis)
+    if (threadIdx.x == blockDim.x - 1 && threadIdx.y == blockDim.y - 1) {
+        sh_block[offset_sh + BLOCK_SIZE_SH + 1] = image[offset_t + width + 1];
+        sh_block[offset_sh + BLOCK_SIZE_SH + 2] = image[offset_t + width + 2];
+        sh_block[offset_sh + 2 * BLOCK_SIZE_SH + 1] = image[offset_t + 2 * width + 1];
+        sh_block[offset_sh + 2 * BLOCK_SIZE_SH + 2] = image[offset_t + 2 * width + 2];
+    }
+
+    __syncthreads();
+
     if (index_x < (width - 2) && index_y < (height - 2)) {
-        int offset_t = index_y * width + index_x;
         int offset = (index_y + 1) * width + (index_x + 1);
 
-        float gx = applyFilter(&image[offset_t], width, sobel_x, 3);
-        float gy = applyFilter(&image[offset_t], width, sobel_y, 3);
+        float gx = applyFilter(&sh_block[offset_t], BLOCK_SIZE_SH, sobel_x, 3);
+        float gy = applyFilter(&sh_block[offset_t], BLOCK_SIZE_SH, sobel_y, 3);
 
         image_out[offset] = sqrtf(gx * gx + gy * gy);
     }
