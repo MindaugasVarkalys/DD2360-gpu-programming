@@ -43,6 +43,6 @@ int main()
         cudaDeviceSynchronize();
     }
     for (int i = 0; i < 10; i++) {
-        printf("%f %f %f\n", particles[0].position_x, particles[0].position_y, particles[0].position_z);
+        printf("%f %f %f\n", particles[i].position_x, particles[i].position_y, particles[i].position_z);
     }
 }

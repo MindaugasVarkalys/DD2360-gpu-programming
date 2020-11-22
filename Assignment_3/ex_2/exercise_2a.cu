@@ -46,5 +46,4 @@ int main()
         simulate<<<N, TPB>>>(d_particles);
         cudaMemcpy(particles, d_particles, sizeof(Particle) * NUM_PARTICLES, cudaMemcpyDeviceToHost);
     }
-
 }
