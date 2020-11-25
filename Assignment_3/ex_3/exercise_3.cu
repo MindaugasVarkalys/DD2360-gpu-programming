@@ -53,7 +53,7 @@ int main()
     for (int i = 0; i < NUM_STREAMS; i++) {
         int offset = i * streamSize;
         cudaMemcpyAsync(&d_particles[offset], &particles[offset], streamBytes, cudaMemcpyHostToDevice, streams[i]);
-        simulate<<<N, TPB>>>(d_particles, offset);
+        simulate<<<N, TPB, streams[i]>>>(d_particles, offset);
         cudaMemcpyAsync(&particles[offset], &d_particles[offset], streamBytes, cudaMemcpyDeviceToHost, streams[i]);
     }
 
