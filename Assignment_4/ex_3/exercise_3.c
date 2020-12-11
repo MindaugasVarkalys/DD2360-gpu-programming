@@ -9,18 +9,44 @@
 
 // This is a macro for checking the error variable.
 #define CHK_ERROR(err) if (err != CL_SUCCESS) fprintf(stderr,"Error: %s\n",clGetErrorString(err));
-#define ARRAY_SIZE 10000
-#define BLOCK_SIZE 256
+#define NUM_PARTICLES 10000
+#define NUM_ITERATIONS 100000
+#define BLOCK_SIZE 16
+
+typedef struct {
+    float x, y, z;
+} Vector3;
+
+typedef struct {
+    Vector3 position;
+    Vector3 velocity;
+} Particle;
 
 // A errorCode to string converter (forward declaration)
 const char* clGetErrorString(int);
 
 
-const char *mykernel = "__kernel                                                                                                                        \n"
-                       "void run(__global float *x, __global float *y, float a)                                                                         \n"
+const char *mykernel =
+                       "typedef struct {\n"
+                       "    float x, y, z;\n"
+                       "} Vector3;\n"
+                       "\n"
+                       "typedef struct {\n"
+                       "    Vector3 position;\n"
+                       "    Vector3 velocity;\n"
+                       "} Particle;\n"
+                       "__kernel                                                                                                                        \n"
+                       "void run(__global Particle *particles, __global float *random, int iterations)                                                                         \n"
                        "{                                                                                                                               \n"
                        "    int index = get_global_id(0);                                                                                               \n"
-                       "    y[index] = a * x[index] + y[index];                                                                                         \n"
+                       "    for (int i = 0; i < iterations; i++) {                                                                                               \n"
+                       "        particles[index].velocity.x += random[i];                                                   \n"
+                       "        particles[index].velocity.y += random[i + 1];                                   \n"
+                       "        particles[index].velocity.z += random[i + 2];                               \n"
+                       "        particles[index].position.x += particles[index].velocity.x;                     \n"
+                       "        particles[index].position.y += particles[index].velocity.y;                                                 \n"
+                       "        particles[index].position.z += particles[index].velocity.z;                                                                                         \n"
+                       "    }                                                                                         \n"
                        "}                                                                                                                               \n";
 
 int main(int argc, char *argv) {
@@ -43,22 +69,47 @@ int main(int argc, char *argv) {
     // Create a command queue
     cl_command_queue cmd_queue = clCreateCommandQueue(context, device_list[0], 0, &err);CHK_ERROR(err);
 
-    float x[ARRAY_SIZE], y[ARRAY_SIZE], result[ARRAY_SIZE];
-    int array_size = ARRAY_SIZE * sizeof(float);
-    float a = 25.421f;
-    printf("Computing SAXPY on the CPU... ");
-    for (int i = 0; i < ARRAY_SIZE; i++) {
-        x[i] = i;
-        y[i] = ARRAY_SIZE - i;
-        result[i] = a * x[i] + y[i];
+    Particle gpu_particles[NUM_PARTICLES];
+    Particle cpu_particles[NUM_PARTICLES];
+    float random[NUM_ITERATIONS + 2];
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        cpu_particles[i].position.x = (float) rand() / RAND_MAX;
+        cpu_particles[i].position.y = (float) rand() / RAND_MAX;
+        cpu_particles[i].position.z = (float) rand() / RAND_MAX;
+        cpu_particles[i].velocity.x = (float) rand() / RAND_MAX;
+        cpu_particles[i].velocity.y = (float) rand() / RAND_MAX;
+        cpu_particles[i].velocity.z = (float) rand() / RAND_MAX;
+
+        gpu_particles[i].position.x = cpu_particles[i].position.x;
+        gpu_particles[i].position.y = cpu_particles[i].position.y;
+        gpu_particles[i].position.z = cpu_particles[i].position.z;
+        gpu_particles[i].velocity.x = cpu_particles[i].velocity.x;
+        gpu_particles[i].velocity.y = cpu_particles[i].velocity.y;
+        gpu_particles[i].velocity.z = cpu_particles[i].velocity.z;
     }
-    printf("Done!\n");
 
-    cl_mem x_dev = clCreateBuffer(context, CL_MEM_READ_ONLY, array_size, NULL, &err);
-    cl_mem y_dev = clCreateBuffer(context, CL_MEM_READ_WRITE, array_size, NULL, &err);
+    printf("Simulating on the CPU... ");
+    int start = time(NULL);
+    random[0] = (float) rand() / RAND_MAX - 0.5f;
+    random[1] = (float) rand() / RAND_MAX - 0.5f;
+    for (int i = 0; i < NUM_ITERATIONS; i++) {
+        random[i + 2] = (float) rand() / RAND_MAX - 0.5f;
+        for (int j = 0; j < NUM_PARTICLES; j++) {
+            cpu_particles[j].velocity.x += random[i];
+            cpu_particles[j].velocity.y += random[i + 1];
+            cpu_particles[j].velocity.z += random[i + 2];
+            cpu_particles[j].position.x += cpu_particles[j].velocity.x;
+            cpu_particles[j].position.y += cpu_particles[j].velocity.y;
+            cpu_particles[j].position.z += cpu_particles[j].velocity.z;
+        }
+    }
+    printf("DONE! Elapsed: %d s\n", time(NULL) - start);
 
-    err = clEnqueueWriteBuffer(cmd_queue, x_dev, CL_TRUE, 0, array_size, x, 0, NULL, NULL);CHK_ERROR(err);
-    err = clEnqueueWriteBuffer(cmd_queue, y_dev, CL_TRUE, 0, array_size, y, 0, NULL, NULL);CHK_ERROR(err);
+    cl_mem particles_dev = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(Particle) * NUM_PARTICLES, NULL, &err);
+    cl_mem random_dev = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(float) * NUM_ITERATIONS + 2, NULL, &err);
+
+    err = clEnqueueWriteBuffer(cmd_queue, particles_dev, CL_TRUE, 0, sizeof(Particle) * NUM_PARTICLES, gpu_particles, 0, NULL, NULL);CHK_ERROR(err);
+    err = clEnqueueWriteBuffer(cmd_queue, random_dev, CL_TRUE, 0, sizeof(float) * NUM_ITERATIONS + 2, random, 0, NULL, NULL);CHK_ERROR(err);
 
     // Create the OpenCL program
     cl_program program = clCreateProgramWithSource(context, 1,(const char **)&mykernel, NULL, &err);CHK_ERROR(err);
@@ -75,28 +126,30 @@ int main(int argc, char *argv) {
     // Create a kernel object referencing our kernel
     cl_kernel kernel = clCreateKernel(program, "run", &err);CHK_ERROR(err);
 
-    err = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *) &x_dev);CHK_ERROR(err);
-    err = clSetKernelArg(kernel, 1, sizeof(cl_mem), (void *) &y_dev);CHK_ERROR(err);
-    err = clSetKernelArg(kernel, 2, sizeof(float), &a);CHK_ERROR(err);
+    int iter = NUM_ITERATIONS;
+    err = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *) &particles_dev);CHK_ERROR(err);
+    err = clSetKernelArg(kernel, 1, sizeof(cl_mem), (void *) &random_dev);CHK_ERROR(err);
+    err = clSetKernelArg(kernel, 2, sizeof(int), &iter);CHK_ERROR(err);
 
 
     // Launch the kernel
     int grid_size;
-    if (ARRAY_SIZE % BLOCK_SIZE  == 0) {
-        grid_size = ARRAY_SIZE / BLOCK_SIZE;
+    if (NUM_PARTICLES % BLOCK_SIZE == 0) {
+        grid_size = NUM_PARTICLES / BLOCK_SIZE;
     } else {
-        grid_size = ARRAY_SIZE / BLOCK_SIZE + 1;
+        grid_size = NUM_PARTICLES / BLOCK_SIZE + 1;
     }
 
-    size_t n_workitem[1] = {ARRAY_SIZE};
+    size_t n_workitem[1] = {NUM_PARTICLES};
     size_t workgroup_size[1] = {grid_size};
     cl_event event;
 
-    printf("Computing SAXPY on the GPU... ");
+    printf("Simulating on the GPU... ");
+    start = time(NULL);
     err = clEnqueueNDRangeKernel(cmd_queue, kernel, 1, NULL, n_workitem, workgroup_size, 0, NULL, NULL);CHK_ERROR(err);
-    printf("Done!\n");
+    printf("DONE! Elapsed: %d s\n", time(NULL) - start);
 
-    err = clEnqueueReadBuffer(cmd_queue, y_dev, CL_TRUE, 0, array_size, y, 0, NULL, NULL);CHK_ERROR(err);
+    err = clEnqueueReadBuffer(cmd_queue, particles_dev, CL_TRUE, 0, sizeof(Particle) * NUM_PARTICLES, gpu_particles, 0, NULL, NULL);CHK_ERROR(err);
 
     // Finally, release all that we have allocated.
     err = clReleaseCommandQueue(cmd_queue);CHK_ERROR(err);
@@ -106,11 +159,20 @@ int main(int argc, char *argv) {
 
     printf("Comparing the output for each implementation... ");
     bool error = false;
-    for (int i = 0; i < ARRAY_SIZE; i++) {
-        float diff = y[i] - result[i];
-        if (abs(diff) > 0.005f) {
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        if (abs(cpu_particles[i].position.x - gpu_particles[i].position.x) > 1
+            || abs(cpu_particles[i].position.y - gpu_particles[i].position.y) > 1
+            || abs(cpu_particles[i].position.z - gpu_particles[i].position.z) > 1
+            || abs(cpu_particles[i].velocity.x - gpu_particles[i].velocity.x) > 1
+            || abs(cpu_particles[i].velocity.y - gpu_particles[i].velocity.y) > 1
+            || abs(cpu_particles[i].velocity.z - gpu_particles[i].velocity.z) > 1
+        ) {
             error = true;
-            fprintf(stderr,"Error at %d (%f /= %f)\n", i, y[i], result[i]);
+            printf("Error! CPU_V: (%f, %f, %f), GPU_V: (%f, %f, %f), CPU_P: (%f, %f, %f), GPU_P: (%f, %f, %f)\n",
+                   cpu_particles[i].velocity.x, cpu_particles[i].velocity.y, cpu_particles[i].velocity.z,
+                   gpu_particles[i].velocity.x, gpu_particles[i].velocity.y, gpu_particles[i].velocity.z,
+                   cpu_particles[i].position.x, cpu_particles[i].position.y, cpu_particles[i].position.z,
+                   gpu_particles[i].position.x, gpu_particles[i].position.y, gpu_particles[i].position.z);
         }
     }
 
@@ -120,8 +182,6 @@ int main(int argc, char *argv) {
 
     return 0;
 }
-
-
 
 // The source for this particular version is from: https://stackoverflow.com/questions/24326432/convenient-way-to-show-opencl-error-codes
 const char* clGetErrorString(int errorCode) {
